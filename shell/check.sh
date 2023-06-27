@@ -33,12 +33,12 @@ pm2_log() {
   echo -e "---> pm2日志"
   local panelOut="/root/.pm2/logs/panel-out.log"
   local panelError="/root/.pm2/logs/panel-error.log"
-  tail -n 100 "$panelOut"
-  tail -n 100 "$panelError"
+  tail -n 300 "$panelOut"
+  tail -n 300 "$panelError"
 }
 
 check_nginx() {
-  local nginxPid=$(ps -ef | grep nginx | grep -v grep)
+  local nginxPid=$(ps -eo pid,command | grep nginx | grep -v grep)
   echo -e "=====> 检测nginx服务\n$nginxPid"
   if [[ $nginxPid ]]; then
     echo -e "\n=====> nginx服务正常\n"
@@ -54,9 +54,6 @@ check_ql() {
   echo -e "\n=====> 检测面板\n\n$api\n"
   if [[ $api =~ "<div id=\"root\"></div>" ]]; then
     echo -e "=====> 面板服务启动正常\n"
-  else
-    echo -e "=====> 面板服务异常，重置基础环境\n"
-    reset_env
   fi
 }
 
@@ -74,25 +71,26 @@ check_pm2() {
   echo -e "\n=====> 检测后台\n\n$api\n"
   if [[ $api =~ "{\"code\"" ]]; then
     echo -e "=====> 后台服务启动正常\n"
-  else
-    echo -e "=====> 后台服务异常，重置基础环境并重启后台\n"
-    reset_env
   fi
-}
-
-start_public() {
-  echo -e "=====> 启动公开服务\n"
-  pm2 delete public --source-map-support --time &>/dev/null
-  pm2 start $dir_static/build/public.js -n public --source-map-support --time &>/dev/null
 }
 
 main() {
   echo -e "=====> 开始检测"
-  npm i -g pnpm
+  npm i -g pnpm@8.3.1
   patch_version
+
+  apk add procps netcat-openbsd
+
+  if [[ $PipMirror ]]; then
+    pip3 config set global.index-url $PipMirror
+  fi
+  if [[ $NpmMirror ]]; then
+    cd && pnpm config set registry $NpmMirror
+    pnpm install -g
+  fi
+
   pnpm add -g pm2 tsx
-  update_depend
-  start_public
+  reset_env
   copy_dep
   check_ql
   check_nginx

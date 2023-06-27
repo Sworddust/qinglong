@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
 
-trap "single_hanle" 2 20 15 14
-single_hanle() {
-  handle_task_after "$@"
-  exit 1
-}
-
 random_delay() {
   local random_delay_max=$RandomDelay
   if [[ $random_delay_max ]] && [[ $random_delay_max -gt 0 ]]; then
@@ -44,7 +38,7 @@ gen_array_scripts() {
     if [[ -f $file ]] && [[ $file == *.js && $file != sendNotify.js ]]; then
       let i++
       array_scripts[i]=$(echo "$file" | perl -pe "s|$dir_scripts/||g")
-      array_scripts_name[i]=$(grep "new Env" $file | awk -F "'|\"" '{print $2}' | head -1)
+      array_scripts_name[i]=$(grep "new Env" $file | awk -F "\(" '{print $2}' | awk -F "\)" '{print $1}' | sed 's:.*\('\''\|"\)\([^"'\'']*\)\('\''\|"\).*:\2:' | sed 's:"::g' | sed "s:'::g" | head -1)
       [[ -z ${array_scripts_name[i]} ]] && array_scripts_name[i]="<未识别出活动名称>"
     fi
   done
@@ -92,44 +86,10 @@ check_server() {
   fi
 }
 
-handle_task_before() {
-  begin_time=$(format_time "$time_format" "$time")
-  begin_timestamp=$(format_timestamp "$time_format" "$time")
-
-  [[ $ID ]] && update_cron "\"$ID\"" "0" "$$" "$log_path" "$begin_timestamp"
-
-  echo -e "## 开始执行... $begin_time\n"
-
-  [[ $is_macos -eq 0 ]] && check_server
-
-  if [[ -s $task_error_log_path ]]; then
-    eval cat $task_error_log_path $cmd
-    eval echo -e "加载 config.sh 出错，请手动检查" $cmd
-    eval echo $cmd
-  fi
-
-  . $file_task_before "$@"
-}
-
-handle_task_after() {
-  . $file_task_after "$@"
-
-  local etime=$(date "+$time_format")
-  local end_time=$(format_time "$time_format" "$etime")
-  local end_timestamp=$(format_timestamp "$time_format" "$etime")
-  local diff_time=$(($end_timestamp - $begin_timestamp))
-
-  [[ "$diff_time" == 0 ]] && diff_time=1
-
-  echo -e "\n\n## 执行结束... $end_time  耗时 $diff_time 秒　　　　　"
-
-  [[ $ID ]] && update_cron "\"$ID\"" "1" "" "$log_path" "$begin_timestamp" "$diff_time"
-}
-
 ## 正常运行单个脚本，$1：传入参数
 run_normal() {
   local file_param=$1
-  if [[ $# -eq 1 ]]; then
+  if [[ $# -eq 1 ]] && [[ "$real_time" != "true" ]]; then
     random_delay "$file_param"
   fi
 
@@ -233,7 +193,7 @@ run_else() {
   local relative_path="${file_param%/*}"
   if [[ ! -z ${relative_path} ]] && [[ ${file_param} =~ "/" ]]; then
     cd ${relative_path}
-    file_param=${file_param/$relative_path\//}
+    file_param=${file_param/$relative_path\//.\/}
   fi
 
   shift

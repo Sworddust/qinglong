@@ -2,7 +2,7 @@
 
 create_token() {
   local token_command="tsx ${dir_root}/back/token.ts"
-  local token_file="${dir_root}static/build/token.js"
+  local token_file="${dir_root}/static/build/token.js"
   if [[ -f $token_file ]]; then
     token_command="node ${token_file}"
   fi
@@ -30,10 +30,10 @@ add_cron_api() {
     local name=$(echo "$1" | awk -F ":" '{print $3}')
     local sub_id=$(echo "$1" | awk -F ":" '{print $4}')
   else
-    local schedule=$1
-    local command=$2
-    local name=$3
-    local sub_id=$4
+    local schedule="$1"
+    local command="$2"
+    local name="$3"
+    local sub_id="$4"
   fi
 
   if [[ ! $sub_id ]];then
@@ -69,10 +69,10 @@ update_cron_api() {
     local name=$(echo "$1" | awk -F ":" '{print $3}')
     local id=$(echo "$1" | awk -F ":" '{print $4}')
   else
-    local schedule=$1
-    local command=$2
-    local name=$3
-    local id=$4
+    local schedule="$1"
+    local command="$2"
+    local name="$3"
+    local id="$4"
   fi
 
   local api=$(
@@ -103,8 +103,8 @@ update_cron_command_api() {
     local command=$(echo "$1" | awk -F ":" '{print $1}')
     local id=$(echo "$1" | awk -F ":" '{print $2}')
   else
-    local command=$1
-    local id=$2
+    local command="$1"
+    local id="$2"
   fi
 
   local api=$(
@@ -130,7 +130,7 @@ update_cron_command_api() {
 }
 
 del_cron_api() {
-  local ids=$1
+  local ids="$1"
   local currentTimeStamp=$(date +%s)
   local api=$(
     curl -s --noproxy "*" "http://0.0.0.0:5600/open/crons?t=$currentTimeStamp" \
@@ -178,13 +178,13 @@ update_cron() {
   code=$(echo "$api" | jq -r .code)
   message=$(echo "$api" | jq -r .message)
   if [[ $code != 200 ]]; then
-    echo -e "\n## 更新任务状态失败(${message})\n" >>$dir_log/$log_path
+    echo -e "\n## 更新任务状态失败(${message})\n"
   fi
 }
 
 notify_api() {
-  local title=$1
-  local content=$2
+  local title="$1"
+  local content="$2"
   local currentTimeStamp=$(date +%s)
   local api=$(
     curl -s --noproxy "*" "http://0.0.0.0:5600/open/system/notify?t=$currentTimeStamp" \
@@ -202,14 +202,14 @@ notify_api() {
   code=$(echo "$api" | jq -r .code)
   message=$(echo "$api" | jq -r .message)
   if [[ $code == 200 ]]; then
-    echo -e "通知发送成功"
+    echo -e "通知发送成功🎉"
   else
     echo -e "通知失败(${message})"
   fi
 }
 
 find_cron_api() {
-  local params=$1
+  local params="$1"
   local currentTimeStamp=$(date +%s)
   local api=$(
     curl -s --noproxy "*" "http://0.0.0.0:5600/open/crons/detail?$params&t=$currentTimeStamp" \

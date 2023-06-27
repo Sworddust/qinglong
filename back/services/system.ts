@@ -5,11 +5,17 @@ import * as fs from 'fs';
 import { AuthDataType, AuthInfo, AuthModel, LoginStatus } from '../data/auth';
 import { NotificationInfo } from '../data/notify';
 import NotificationService from './notify';
-import ScheduleService from './schedule';
-import { spawn } from 'child_process';
+import ScheduleService, { TaskCallbacks } from './schedule';
+import { spawn } from 'cross-spawn';
 import SockService from './sock';
 import got from 'got';
-import { parseContentVersion, parseVersion } from '../config/util';
+import {
+  getPid,
+  killTask,
+  parseContentVersion,
+  parseVersion,
+} from '../config/util';
+import { TASK_COMMAND } from '../config/const';
 
 @Service()
 export default class SystemService {
@@ -168,6 +174,41 @@ export default class SystemService {
       return { code: 200, message: '通知发送成功' };
     } else {
       return { code: 400, message: '通知发送失败，请检查系统设置/通知配置' };
+    }
+  }
+
+  public async run(
+    { command, logPath }: { command: string; logPath: string },
+    callback: TaskCallbacks,
+  ) {
+    if (!command.startsWith(TASK_COMMAND)) {
+      command = `${TASK_COMMAND} ${command}`;
+    }
+    this.scheduleService.runTask(
+      `real_log_path=${logPath} real_time=true ${command}`,
+      callback,
+    );
+  }
+
+  public async stop({ command, pid }: { command: string; pid: number }) {
+    if (!pid && !command) {
+      return { code: 400, message: '参数错误' };
+    }
+
+    if (pid) {
+      await killTask(pid);
+      return { code: 200 };
+    }
+
+    if (!command.startsWith(TASK_COMMAND)) {
+      command = `${TASK_COMMAND} ${command}`;
+    }
+    const _pid = await getPid(command);
+    if (_pid) {
+      await killTask(_pid);
+      return { code: 200 };
+    } else {
+      return { code: 400, message: '任务未找到' };
     }
   }
 }

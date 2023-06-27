@@ -7,7 +7,12 @@ import SystemService from '../services/system';
 import { celebrate, Joi } from 'celebrate';
 import UserService from '../services/user';
 import { EnvModel } from '../data/env';
-import { parseVersion, promiseExec } from '../config/util';
+import {
+  getUniqPath,
+  handleLogPath,
+  parseVersion,
+  promiseExec,
+} from '../config/util';
 import dayjs from 'dayjs';
 
 const route = Router();
@@ -42,8 +47,7 @@ export default (app: Router) => {
       if (
         Object.keys(authInfo).length === 2 &&
         authInfo.username === 'admin' &&
-        authInfo.password === 'admin' &&
-        envCount === 0
+        authInfo.password === 'admin'
       ) {
         isInitialized = false;
       }
@@ -141,6 +145,66 @@ export default (app: Router) => {
       try {
         const systemService = Container.get(SystemService);
         const result = await systemService.notify(req.body);
+        res.send(result);
+      } catch (e) {
+        return next(e);
+      }
+    },
+  );
+
+  route.put(
+    '/command-run',
+    celebrate({
+      body: Joi.object({
+        command: Joi.string().required(),
+      }),
+    }),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const systemService = Container.get(SystemService);
+        const uniqPath = await getUniqPath(req.body.command);
+        const logTime = dayjs().format('YYYY-MM-DD-HH-mm-ss-SSS');
+        const logPath = `${uniqPath}/${logTime}.log`;
+        res.setHeader('Content-type', 'application/octet-stream');
+        await systemService.run(
+          { ...req.body, logPath },
+          {
+            onStart: async (cp, startTime) => {
+              res.setHeader('QL-Task-Pid', `${cp.pid}`);
+            },
+            onEnd: async (cp, endTime, diff) => {
+              res.end();
+            },
+            onError: async (message: string) => {
+              res.write(`\n${message}`);
+              const absolutePath = await handleLogPath(logPath);
+              fs.appendFileSync(absolutePath, `\n${message}`);
+            },
+            onLog: async (message: string) => {
+              res.write(`\n${message}`);
+              const absolutePath = await handleLogPath(logPath);
+              fs.appendFileSync(absolutePath, `\n${message}`);
+            },
+          },
+        );
+      } catch (e) {
+        return next(e);
+      }
+    },
+  );
+
+  route.put(
+    '/command-stop',
+    celebrate({
+      body: Joi.object({
+        command: Joi.string().optional(),
+        pid: Joi.number().optional(),
+      }),
+    }),
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const systemService = Container.get(SystemService);
+        const result = await systemService.stop(req.body);
         res.send(result);
       } catch (e) {
         return next(e);

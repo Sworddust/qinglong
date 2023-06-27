@@ -18,6 +18,7 @@ dir_update_log=$dir_log/update
 ql_static_repo=$dir_repo/static
 
 ## 文件
+file_ecosystem_js=$dir_root/ecosystem.config.js
 file_config_sample=$dir_sample/config.sample.sh
 file_env=$dir_config/env.sh
 file_sharecode=$dir_config/sharecode.sh
@@ -34,7 +35,6 @@ file_notify_js_sample=$dir_sample/notify.js
 file_notify_py_sample=$dir_sample/notify.py
 file_notify_py=$dir_scripts/notify.py
 file_notify_js=$dir_scripts/sendNotify.js
-task_error_log_path=$dir_log/task_error.log
 nginx_app_conf=$dir_root/docker/front.conf
 nginx_conf=$dir_root/docker/nginx.conf
 dep_notify_py=$dir_dep/notify.py
@@ -67,8 +67,8 @@ import_config() {
   [[ -f $file_config_user ]] && . $file_config_user
   [[ -f $file_env ]] && . $file_env
 
-  ql_base_url=${QlBaseUrl:-""}
-  command_timeout_time=${CommandTimeoutTime:-"1h"}
+  ql_base_url=${QlBaseUrl:-"/"}
+  command_timeout_time=${CommandTimeoutTime:-""}
   proxy_url=${ProxyUrl:-""}
   file_extensions=${RepoFileExtensions:-"js py"}
   current_branch=${QL_BRANCH}
@@ -98,6 +98,9 @@ set_proxy() {
 unset_proxy() {
   unset http_proxy
   unset https_proxy
+  unset ftp_proxy
+  unset all_proxy
+  unset no_proxy
 }
 
 make_dir() {
@@ -262,28 +265,13 @@ npm_install_sub() {
   fi
 }
 
-npm_install_1() {
-  local dir_current=$(pwd)
-  local dir_work=$1
-
-  cd $dir_work
-  echo -e "运行 npm install...\n"
-  npm_install_sub
-  [[ $? -ne 0 ]] && echo -e "\nnpm install 运行不成功，请进入 $dir_work 目录后手动运行 npm install...\n"
-  cd $dir_current
-}
-
 npm_install_2() {
   local dir_current=$(pwd)
   local dir_work=$1
 
   cd $dir_work
-  echo -e "检测到 $dir_work 的依赖包有变化，运行 npm install...\n"
+  echo -e "安装 $dir_work 依赖包...\n"
   npm_install_sub
-  if [[ $? -ne 0 ]]; then
-    echo -e "\n安装 $dir_work 的依赖包运行不成功，再次尝试一遍...\n"
-    npm_install_1 $dir_work
-  fi
   cd $dir_current
 }
 
@@ -315,11 +303,13 @@ git_clone_scripts() {
   echo -e "开始克隆仓库 $url 到 $dir\n"
 
   set_proxy "$proxy"
+
   git clone --depth=1 $part_cmd $url $dir
   exit_status=$?
-  unset_proxy
 
-  reset_branch "$branch"
+  reset_branch "$branch" "$dir"
+
+  unset_proxy
 }
 
 git_pull_scripts() {
@@ -329,19 +319,25 @@ git_pull_scripts() {
   local proxy="$3"
   cd $dir_work
   echo -e "开始更新仓库：$dir_work"
+  set_proxy "$proxy"
+
+  if [[ ! $branch ]]; then
+    branch=$(cd $dir_work && git remote show origin | grep 'HEAD branch' | cut -d' ' -f5)
+  fi
 
   local pre_commit_id=$(git rev-parse --short HEAD)
-  set_proxy "$proxy"
-  git fetch --depth=1 --all
-  git pull --depth=1 &>/dev/null
-  exit_status=$?
-  unset_proxy
+  reset_branch "$branch" "$dir_work"
 
-  reset_branch "$branch"
+  git fetch --depth 1 origin $branch
+  exit_status=$?
+
+  reset_branch "$branch" "$dir_work"
   local cur_commit_id=$(git rev-parse --short HEAD)
   if [[ $cur_commit_id != $pre_commit_id ]]; then
     exit_status=0
   fi
+
+  unset_proxy
   cd $dir_current
 }
 
@@ -359,19 +355,16 @@ reset_romote_url() {
     git init
     git remote add origin $url &>/dev/null
   fi
-  
+
   cd $dir_current
 }
 
 reset_branch() {
   local branch="$1"
-  local part_cmd="HEAD"
-  if [[ $branch ]]; then
-    part_cmd="origin/${branch}"
-    git checkout -B "$branch" &>/dev/null
-    git branch --set-upstream-to=$part_cmd $branch &>/dev/null
-  fi
+  local part_cmd="origin/${branch}"
+  git remote set-branches origin $branch
   git reset --hard $part_cmd &>/dev/null
+  git checkout -b $branch $part_cmd &>/dev/null
 }
 
 random_range() {
@@ -381,15 +374,11 @@ random_range() {
 }
 
 reload_pm2() {
-  pm2 l &>/dev/null
-
-  echo -e "启动面板服务\n"
-  pm2 delete panel --source-map-support --time &>/dev/null
-  pm2 start $dir_static/build/app.js -n panel --source-map-support --time &>/dev/null
-
-  echo -e "启动定时服务\n"
-  pm2 delete schedule --source-map-support --time &>/dev/null
-  pm2 start $dir_static/build/schedule/index.js -n schedule --source-map-support --time &>/dev/null
+  cd $dir_root
+  # 代理会影响 grpc 服务
+  unset_proxy
+  pm2 flush &>/dev/null
+  pm2 startOrGracefulReload $file_ecosystem_js
 }
 
 diff_time() {
@@ -439,18 +428,6 @@ format_timestamp() {
 }
 
 patch_version() {
-  # 兼容pnpm@7
-  pnpm setup &>/dev/null
-  source ~/.bashrc
-
-  if [[ $PipMirror ]]; then
-    pip3 config set global.index-url $PipMirror
-  fi
-  if [[ $NpmMirror ]]; then
-    cd && pnpm config set registry $NpmMirror
-    pnpm install -g
-  fi
-
   git config --global pull.rebase false
 
   cp -f $dir_root/.env.example $dir_root/.env
@@ -490,8 +467,20 @@ patch_version() {
 init_nginx() {
   cp -fv $nginx_conf /etc/nginx/nginx.conf
   cp -fv $nginx_app_conf /etc/nginx/conf.d/front.conf
-  sed -i "s,QL_BASE_URL,${qlBaseUrl},g" /etc/nginx/conf.d/front.conf
-  
+  local location_url="/"
+  local aliasStr=""
+  local rootStr=""
+  if [[ $ql_base_url != "/" ]]; then
+    location_url="^~${ql_base_url%*/}"
+    aliasStr="alias ${dir_static}/dist;"
+  else
+    rootStr="root ${dir_static}/dist;"
+  fi
+  sed -i "s,QL_ALIAS_CONFIG,${aliasStr},g" /etc/nginx/conf.d/front.conf
+  sed -i "s,QL_ROOT_CONFIG,${rootStr},g" /etc/nginx/conf.d/front.conf
+  sed -i "s,QL_BASE_URL_LOCATION,${location_url},g" /etc/nginx/conf.d/front.conf
+  sed -i "s,QL_BASE_URL,${ql_base_url},g" /etc/nginx/conf.d/front.conf
+
   ipv6=$(ip a | grep inet6)
   ipv6Str=""
   if [[ $ipv6 ]]; then
@@ -500,10 +489,34 @@ init_nginx() {
   sed -i "s,IPV6_CONFIG,${ipv6Str},g" /etc/nginx/conf.d/front.conf
 }
 
+handle_task_before() {
+  [[ $ID ]] && update_cron "\"$ID\"" "0" "$$" "$log_path" "$begin_timestamp"
+
+  echo -e "## 开始执行... $begin_time\n"
+
+  [[ $is_macos -eq 0 ]] && check_server
+
+  . $file_task_before "$@"
+}
+
+handle_task_after() {
+  . $file_task_after "$@"
+
+  local etime=$(date "+$time_format")
+  local end_time=$(format_time "$time_format" "$etime")
+  local end_timestamp=$(format_timestamp "$time_format" "$etime")
+  local diff_time=$(($end_timestamp - $begin_timestamp))
+
+  [[ "$diff_time" == 0 ]] && diff_time=1
+
+  echo -e "\n\n## 执行结束... $end_time  耗时 $diff_time 秒　　　　　"
+
+  [[ $ID ]] && update_cron "\"$ID\"" "1" "" "$log_path" "$begin_timestamp" "$diff_time"
+}
+
 init_env
 detect_termux
 detect_macos
 define_cmd
-fix_config
 
-import_config $1 2>$task_error_log_path
+import_config $1
